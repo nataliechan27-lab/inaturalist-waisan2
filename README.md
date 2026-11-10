@@ -1,6 +1,7 @@
 # iNaturalist 觀察地圖（澳門）
 
-線上版：<https://nataliechan27-lab.github.io/inaturalist-waisan2/>
+線上版（Netlify）：<https://resplendent-alpaca-f1f9f2.netlify.app/>  
+GitHub Pages 預覽：<https://nataliechan27-lab.github.io/inaturalist-waisan2/>
 
 以 Leaflet 建立的可互動生物多樣性地圖，資料來自 iNaturalist 公開 API，只顯示 **research grade** 觀察。預設載入 `@waisan2` 的內建快照，也可輸入其他公開帳號即時載入。
 
@@ -47,6 +48,14 @@ GitHub Pages 會自動重新發布。
 ## Netlify 更新
 
 若網站是手動上傳到 Netlify，可在 Netlify 網站後台用 **Deploys → Drag and drop** 上傳重建後的 `dist/` 資料夾；這會保留同一個網址。也可以把 GitHub repo 連到 Netlify，之後每次 push 自動部署。
+
+這個網站的 Netlify site ID 是 `ec38d009-cf86-4b5d-af68-b887870af8e6`。若要用 CLI 更新同一個網站：
+
+```powershell
+npx --yes netlify-cli@latest login
+npx --yes netlify-cli@latest link --id ec38d009-cf86-4b5d-af68-b887870af8e6
+npx --yes netlify-cli@latest deploy --prod --dir=dist
+```
 
 ## 注意
 
