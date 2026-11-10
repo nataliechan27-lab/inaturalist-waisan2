@@ -66,7 +66,32 @@
 
   /* ---------------- 座標轉換 ---------------- */
   var PI = Math.PI, AXIS = 6378245.0, EE = 0.00669342162296594323;
-  function outOfChina(lat, lng) { return !(lng > 73.66 && lng < 135.05 && lat > 3.86 && lat < 53.55); }
+  function pointInRing(lat, lng, ring) {
+    var inside = false;
+    for (var i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      var xi = ring[i][0], yi = ring[i][1];
+      var xj = ring[j][0], yj = ring[j][1];
+      if (((yi > lat) !== (yj > lat)) && (lng < (xj - xi) * (lat - yi) / (yj - yi) + xi)) inside = !inside;
+    }
+    return inside;
+  }
+  // Amap uses GCJ-02 in mainland China, Hong Kong, Macau and Taiwan;
+  // it uses WGS84 overseas. Keep the fallback rectangle if the region file is missing.
+  function inGcjRegion(lat, lng) {
+    var region = window.INAT_GCJ_REGION;
+    if (!region) return lng > 73.66 && lng < 135.05 && lat > 3.86 && lat < 53.55;
+    var polygons = region.polygons || [];
+    for (var i = 0; i < polygons.length; i++) {
+      if (pointInRing(lat, lng, polygons[i])) return true;
+    }
+    var boxes = region.boxes || [];
+    for (var b = 0; b < boxes.length; b++) {
+      var box = boxes[b];
+      if (lng >= box[0] && lng <= box[2] && lat >= box[1] && lat <= box[3]) return true;
+    }
+    return false;
+  }
+  function outOfChina(lat, lng) { return !inGcjRegion(lat, lng); }
   function transformLat(x, y) {
     var r = -100.0 + 2.0 * x + 3.0 * y + 0.2 * y * y + 0.1 * x * y + 0.2 * Math.sqrt(Math.abs(x));
     r += (20.0 * Math.sin(6.0 * x * PI) + 20.0 * Math.sin(2.0 * x * PI)) * 2.0 / 3.0;
@@ -95,15 +120,67 @@
   }
 
   /* ---------------- 地圖 ---------------- */
-  var map = L.map('map', { zoomControl: true, maxZoom: 18, minZoom: 2, worldCopyJump: true });
+  var map = L.map('map', { zoomControl: false, maxZoom: 18, minZoom: 2, worldCopyJump: true });
+  L.control.zoom({ position: 'bottomright' }).addTo(map);
+  var compactLayout = window.matchMedia('(max-width:760px), (max-width:1000px) and (max-height:500px)');
+  function setPanelCompact(compact) {
+    var panel = $('panel');
+    if (!panel) return;
+    panel.classList.toggle('compact', compact);
+    var toggle = $('panelToggle');
+    if (toggle) {
+      toggle.setAttribute('aria-expanded', String(!compact));
+      toggle.textContent = compact ? '篩選' : '收合';
+    }
+  }
   map.createPane('accPane');
   map.getPane('accPane').style.zIndex = 350;
 
-  var street = L.tileLayer(
-    'https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}',
+  // Retry another AutoNavi host before reporting a tile failure to Leaflet.
+  var AmapTiles = L.TileLayer.extend({
+    createTile: function (coords, done) {
+      var tile = document.createElement('img');
+      tile.alt = '';
+      tile.setAttribute('role', 'presentation');
+      tile.referrerPolicy = 'no-referrer';
+      var url = this.getTileUrl(coords);
+      var attempt = 0;
+      var timer;
+      var finished = false;
+      function finish(error) {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timer);
+        tile.onload = tile.onerror = null;
+        done(error, tile);
+      }
+      function retry() {
+        if (finished) return;
+        clearTimeout(timer);
+        if (++attempt >= 3) { finish(new Error('AutoNavi tile unavailable')); return; }
+        requestTile();
+      }
+      function requestTile() {
+        var host = ((coords.x + coords.y + attempt) % 4 + 4) % 4 + 1;
+        timer = setTimeout(retry, 6000);
+        tile.src = url.replace(/(web(?:rd|st)0)[1-4]/, '$1' + host);
+      }
+      tile._amapCancel = function () {
+        finished = true;
+        clearTimeout(timer);
+        tile.onload = tile.onerror = null;
+      };
+      tile.onload = function () { finish(null); };
+      tile.onerror = retry;
+      requestTile();
+      return tile;
+    }
+  });
+  var street = new AmapTiles(
+    'https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=7&x={x}&y={y}&z={z}',
     { subdomains: '1234', maxZoom: 18, attribution: '&copy; 高德地圖 AutoNavi' }
   ).addTo(map);
-  var satellite = L.tileLayer(
+  var satellite = new AmapTiles(
     'https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}',
     { subdomains: '1234', maxZoom: 18, attribution: '&copy; 高德地圖 AutoNavi' }
   );
@@ -114,9 +191,41 @@
   L.control.layers(
     { '高德街道': street, '高德衛星': satellite, '淺色底圖': carto },
     null,
-    { position: 'topright', collapsed: false }
+    { position: 'topright', collapsed: true }
   ).addTo(map);
   L.control.scale({ position: 'bottomleft', imperial: false, maxWidth: 140 }).addTo(map);
+
+  function updateBaseLabel() {
+    $('baseLabel').textContent = map.hasLayer(carto) ? '淺色底圖' :
+      (map.hasLayer(satellite) ? '高德衛星' : '高德街道');
+  }
+  function baseChanged() {
+    updateBaseLabel();
+    applyCoords();
+  }
+  map.on('baselayerchange', baseChanged);
+  [street, satellite].forEach(function (layer) {
+    var loaded = 0;
+    var failed = 0;
+    layer.on('tileunload', function (event) { event.tile._amapCancel(); });
+    layer.on('loading', function () { loaded = 0; failed = 0; });
+    layer.on('tileload', function () { loaded++; });
+    layer.on('tileerror', function () { failed++; });
+    layer.on('load', function () {
+      if (!map.hasLayer(layer) || loaded || !failed) return;
+      // Let Leaflet finish its tile callbacks before removing the layer.
+      setTimeout(function () {
+        if (!map.hasLayer(layer) || loaded || !failed) return;
+        map.removeLayer(layer);
+        carto.addTo(map);
+        baseChanged();
+        toast('高德地圖暫時無法連線，已切換淺色底圖；可於右上角重新選擇高德地圖重試。', 10000);
+      }, 0);
+    });
+  });
+  // Show a map even when an account has no observations or its API is unavailable.
+  map.setView([22.2, 113.55], 11);
+
 
   /* ---------------- 相片卡 ---------------- */
   var card = document.createElement('div');
@@ -148,10 +257,12 @@
     var pt = map.latLngToContainerPoint(hoverMarker.getLatLng());
     var w = card.offsetWidth, h = card.offsetHeight;
     var size = map.getSize();
+    var margin = 10;
     var x = pt.x + 20;
-    if (x + w > size.x - 10) x = pt.x - w - 20;
+    if (x + w > size.x - margin) x = pt.x - w - 20;
+    x = Math.max(margin, Math.min(x, size.x - w - margin));
     var y = pt.y - h / 2;
-    y = Math.max(10, Math.min(y, size.y - h - 10));
+    y = Math.max(margin, Math.min(y, size.y - h - margin));
     card.style.left = Math.round(x) + 'px';
     card.style.top = Math.round(y) + 'px';
   }
@@ -179,7 +290,7 @@
 
   /* ---------------- 標記 ---------------- */
   function currentLatLng(m) {
-    if (!$('gcj').checked) return m._wgs;
+    if (!$('gcj').checked || map.hasLayer(carto)) return m._wgs;
     return wgs2gcj(m._wgs[0], m._wgs[1]);
   }
   function boundsOf(list) {
@@ -188,11 +299,22 @@
       return [ll[0], ll[1]];
     }));
   }
+  function fitPadding() {
+    // Leave room for the desktop/tablet panel and the compact phone header.
+    var left = compactLayout.matches ? 20 : 330;
+    var top = compactLayout.matches ? 90 : 20;
+    return { paddingTopLeft: [left, top], paddingBottomRight: [20, 30] };
+  }
   function fitVisible() {
     var vis = visibleMarkers();
     if (!vis.length) return;
     if (vis.length === 1) { map.setView(currentLatLng(vis[0]), 16); return; }
-    map.fitBounds(boundsOf(vis).pad(0.2), { maxZoom: 15 });
+    var pad = fitPadding();
+    map.fitBounds(boundsOf(vis).pad(0.2), {
+      maxZoom: 15,
+      paddingTopLeft: pad.paddingTopLeft,
+      paddingBottomRight: pad.paddingBottomRight
+    });
   }
   function applyCoords() {
     state.markerRefs.forEach(function (m) {
@@ -301,6 +423,9 @@
     });
   }
   function applyFilters(opts) {
+    Object.keys(state.chipEls).forEach(function (g) {
+      state.chipEls[g].setAttribute('aria-pressed', String(state.active.has(g)));
+    });
     var q = $('search').value.trim().toLowerCase();
     var tf = state.taxFilter;
     state.markerRefs.forEach(function (m) {
@@ -322,7 +447,9 @@
     el.innerHTML = '';
     state.chipEls = {};
     Object.keys(state.groups).sort(function (a, b) { return state.groups[b] - state.groups[a]; }).forEach(function (g) {
-      var chip = document.createElement('div');
+      var chip = document.createElement('button');
+      chip.type = 'button';
+      chip.setAttribute('aria-pressed', String(state.active.has(g)));
       chip.className = 'chip' + (state.active.has(g) ? '' : ' off');
       chip.innerHTML = '<span class="dot" style="background:' + (COLORS[g] || COLORS.Other) + '"></span>' +
         esc(LABELS[g] || g) + ' ' + state.groups[g];
@@ -336,6 +463,7 @@
           chip.classList.remove('off');
           state.layers[g].addTo(map);
         }
+        chip.setAttribute('aria-pressed', String(state.active.has(g)));
         applyFilters();
       };
       el.appendChild(chip);
@@ -675,6 +803,8 @@
       });
       writeCache(user, records);
       if (opts.hash) applyHash(opts.hash);
+      // On phones, get out of the way after a successful account load.
+      if (compactLayout.matches) setPanelCompact(true);
       toast('已載入 @' + user + '：' + records.length + ' 筆觀察');
     } catch (err) {
       var msg = String((err && err.message) || '');
@@ -1107,6 +1237,12 @@
 
   /* ---------------- 初始化 ---------------- */
   function init() {
+    setPanelCompact(compactLayout.matches);
+    compactLayout.addEventListener('change', function (e) { setPanelCompact(e.matches); });
+    $('panelToggle').onclick = function () {
+      setPanelCompact(!$('panel').classList.contains('compact'));
+    };
+
     $('gcj').addEventListener('change', function () { applyCoords(); });
     $('accChk').addEventListener('change', syncAcc);
     $('search').addEventListener('input', function () { applyFilters(); });
@@ -1199,6 +1335,7 @@
     window.addEventListener('resize', function () {
       clearTimeout(resizeTimer);
       resizeTimer = setTimeout(function () {
+        map.invalidateSize({ pan: false });
         if (drawerOpen()) drawTreemap();
         positionCard();
       }, 150);
@@ -1249,7 +1386,10 @@
     applyFilters: applyFilters,
     buildShareURL: buildShareURL,
     openWall: openWall,
-    fromApi: fromApi
+    fromApi: fromApi,
+    wgs2gcj: wgs2gcj,
+    outOfChina: outOfChina,
+    inGcjRegion: inGcjRegion
   };
 
   init();

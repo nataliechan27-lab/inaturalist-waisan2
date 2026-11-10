@@ -2,9 +2,10 @@
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8">
+<link rel="icon" href="data:,">
 <title>iNaturalist 觀察地圖</title>
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="stylesheet" href="vendor/leaflet/leaflet.css">
 <style>
   html, body { margin:0; height:100%; font-family: system-ui, "Microsoft JhengHei", "Noto Sans TC", sans-serif; }
   #map { position:absolute; inset:0; background:#eef1f4; }
@@ -140,7 +141,7 @@
 
   /* 滑鼠懸停相片卡 */
   #photoCard {
-    position:absolute; z-index:1200; display:block; width:272px;
+    position:absolute; z-index:1200; display:block; width:272px; max-width:calc(100vw - 20px);
     background:#fff; border-radius:12px; overflow:hidden; pointer-events:none;
     box-shadow:0 12px 34px rgba(0,0,0,.3);
     opacity:0; transform:translateY(6px) scale(.97);
@@ -220,9 +221,84 @@
   #toast { position:fixed; left:50%; top:18px; transform:translateX(-50%); z-index:5000; background:rgba(30,33,36,.92); color:#fff; padding:9px 16px; border-radius:999px; font-size:12px; max-width:80vw; }
   #toast.hidden { display:none; }
 
-  @media (max-width: 760px) {
-    #panel { width:calc(100vw - 28px); max-width:300px; }
-    #drawer { width:100vw; }
+  /* Responsive viewport, safe areas, and independently scrolling panels. */
+  *, *::before, *::after { box-sizing:border-box; }
+  html, body { width:100%; overflow:hidden; }
+  body { height:100vh; height:100dvh; }
+  #map { position:fixed; }
+  #panel {
+    top:max(14px, env(safe-area-inset-top)); left:max(14px, env(safe-area-inset-left));
+    width:300px; max-width:calc(100% - 28px);
+    max-height:calc(100% - 28px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+    display:flex; flex-direction:column; overflow:hidden;
+  }
+  .panel-head { display:flex; align-items:center; justify-content:space-between; gap:8px; flex-shrink:0; }
+  .panel-head > div { min-width:0; }
+  #panel .sub { margin-bottom:0; overflow-wrap:anywhere; }
+  #panelBody { overflow:auto; min-height:0; padding-top:12px; overscroll-behavior:contain; }
+  #panelToggle { display:none; flex:none; border:1px solid #ddd; border-radius:8px; background:#f6f7f9; color:#1565c0; font:inherit; padding:8px 10px; cursor:pointer; }
+  button, input, select { font-family:inherit; }
+  button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible { outline:3px solid #8ab4f8; outline-offset:2px; }
+  .stat { min-width:0; }
+  .status, .popup-title, .popup-meta, #lbMeta, .tm-crumb { overflow-wrap:anywhere; }
+  .wall-head, .dw-head { flex-shrink:0; padding-top:max(12px, env(safe-area-inset-top)); }
+  .wall-head { padding-left:max(20px, env(safe-area-inset-left)); padding-right:max(20px, env(safe-area-inset-right)); }
+  .wall-head > div:first-child { min-width:0; }
+  .wall-actions { flex-shrink:0; }
+  .wall-body, .dw-body { min-height:0; overscroll-behavior:contain; padding-bottom:max(30px, env(safe-area-inset-bottom)); }
+  #drawer { padding-right:env(safe-area-inset-right); }
+  .hm { grid-template-columns:50px repeat(12, minmax(0, 1fr)); }
+  #lightbox { padding:max(64px, env(safe-area-inset-top)) max(64px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(64px, env(safe-area-inset-left)); overflow:auto; }
+  #lbImg { min-height:0; flex:0 1 auto; max-width:100%; max-height:60vh; max-height:60dvh; }
+  #lbMeta { flex-shrink:0; max-width:100%; max-height:25vh; max-height:25dvh; overflow:auto; }
+  #lbClose { top:max(12px, env(safe-area-inset-top)); right:max(12px, env(safe-area-inset-right)); }
+  #lbPrev { left:max(8px, env(safe-area-inset-left)); }
+  #lbNext { right:max(8px, env(safe-area-inset-right)); }
+  .leaflet-top { top:env(safe-area-inset-top); }
+  .leaflet-right { right:env(safe-area-inset-right); }
+  .leaflet-bottom { bottom:env(safe-area-inset-bottom); }
+  .leaflet-popup-content { max-width:calc(100vw - 64px); max-height:55vh; max-height:55dvh; overflow:auto; overflow-wrap:anywhere; }
+  .popup-img { max-width:100%; height:auto; aspect-ratio:4/3; }
+  .leaflet-control-attribution { max-width:75vw; }
+  #toast { top:max(18px, env(safe-area-inset-top)); overflow-wrap:anywhere; }
+
+  @media (max-width:760px), (max-width:1000px) and (max-height:500px) {
+    #panel { top:max(8px, env(safe-area-inset-top)); left:max(8px, env(safe-area-inset-left)); width:min(360px, calc(100% - 76px - env(safe-area-inset-left) - env(safe-area-inset-right))); padding:12px; max-height:calc(75vh - 16px); max-height:calc(75dvh - 16px - env(safe-area-inset-top)); }
+    #panel h1 { font-size:14px; }
+    #panel .sub { font-size:10px; }
+    #panelToggle { display:block; }
+    #photoCard { max-width:calc(100vw - 20px); }
+    #photoCard img { max-height:38vh; max-height:38dvh; }
+    #panel.compact #panelBody { display:none; }
+    #drawer { width:min(420px, 100%); }
+    input#search, .account input, select#orderSel { font-size:16px; min-height:44px; }
+    .btnrow button, .account button, .dw-actions button, #panelToggle, .tm-toggle button { min-height:44px; }
+    .chip { min-height:44px; font-family:inherit; }
+    .opt { min-height:44px; align-items:center; }
+    .opt input { width:20px; height:20px; flex-shrink:0; }
+    .wall-tip { display:none; }
+    .wall-head { padding-left:max(12px, env(safe-area-inset-left)); padding-right:max(12px, env(safe-area-inset-right)); gap:8px; }
+    #wallCount { display:block; margin:3px 0 0; }
+    .wall-body { padding:12px 12px max(24px, env(safe-area-inset-bottom)); }
+    .wall-grid { grid-template-columns:repeat(auto-fill, minmax(min(130px, 100%), 1fr)); gap:8px; }
+    #wallClose, .dw-head .x, #lbClose { width:44px; height:44px; flex-shrink:0; }
+    #lightbox { padding:64px 12px max(70px, calc(56px + env(safe-area-inset-bottom))); }
+    #lbImg { max-height:52vh; max-height:52dvh; }
+    #lbMeta { margin-top:10px; font-size:12px; max-height:22vh; max-height:22dvh; }
+    #lbPrev, #lbNext { top:auto; bottom:max(10px, env(safe-area-inset-bottom)); transform:none; }
+    #lbPrev { left:calc(50% - 58px); }
+    #lbNext { right:calc(50% - 58px); }
+    .leaflet-control-zoom a { width:44px; height:44px; line-height:44px; }
+    .leaflet-control-layers-toggle { width:44px; height:44px; }
+    .leaflet-control-layers-expanded { max-width:calc(100vw - 24px); }
+    .leaflet-control-layers label { min-height:44px; display:flex; align-items:center; }
+  }
+  @media (hover:none), (pointer:coarse) {
+    .wi-cap { opacity:1; }
+    .wall-item:hover img { transform:none; }
+  }
+  @media (prefers-reduced-motion:reduce) {
+    *, *::before, *::after { transition:none !important; animation:none !important; }
   }
 </style>
 </head>
@@ -230,11 +306,15 @@
 <div id="map"></div>
 
 <div id="panel">
-  <h1>iNaturalist 觀察地圖</h1>
-  <div class="sub"><span id="userLabel">@—</span> · research grade · 高德底圖</div>
+  <div class="panel-head">
+    <div><h1>iNaturalist 觀察地圖</h1>
+    <div class="sub"><span id="userLabel">@—</span> · research grade · <span id="baseLabel">高德街道</span></div></div>
+    <button id="panelToggle" type="button" aria-controls="panelBody" aria-expanded="true">收合</button>
+  </div>
+  <div id="panelBody">
 
   <div class="account">
-    <input id="userInput" type="text" placeholder="iNaturalist 帳號" autocomplete="off" spellcheck="false">
+    <input id="userInput" aria-label="iNaturalist 帳號" type="text" placeholder="iNaturalist 帳號" autocomplete="off" spellcheck="false">
     <button id="loadBtn">載入</button>
   </div>
   <div class="status" id="status">載入中…</div>
@@ -246,17 +326,17 @@
   </div>
 
   <p class="label">搜尋物種</p>
-  <input id="search" type="text" placeholder="中文名、學名或地點…">
+  <input id="search" aria-label="搜尋物種或地點" type="text" placeholder="中文名、學名或地點…">
 
   <p class="label">類群篩選</p>
   <div class="chips" id="chips"></div>
 
   <p class="label">分類（目）</p>
-  <select id="orderSel"></select>
+  <select id="orderSel" aria-label="分類（目）"></select>
 
   <label class="opt">
     <input type="checkbox" id="gcj" checked>
-    <span>GCJ-02 座標校正<br><span style="color:#999">高德圖磚為 GCJ-02，開啟才會與底圖對齊</span></span>
+    <span>GCJ-02 座標校正<br><span style="color:#999">高德在中國大陸／香港／澳門／台灣使用 GCJ-02；海外及「淺色底圖」自動使用 WGS84。</span></span>
   </label>
 
   <label class="opt">
@@ -273,6 +353,7 @@
     <button id="reset">重設視圖</button>
   </div>
   <p class="hint">滑鼠移到圓點會浮出照片；手機可直接點圓點。「分析」開啟季節熱圖與分類 Treemap。</p>
+  </div>
 </div>
 
 <div id="drawer">
@@ -351,8 +432,9 @@
 
 <div id="toast" class="hidden"></div>
 
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="vendor/leaflet/leaflet.js"></script>
 <script src="snapshot.js"></script>
+<script src="gcj-region.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
